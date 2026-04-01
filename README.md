@@ -1,4 +1,4 @@
-# lorawan-firmware
+# Lorawan-Firmware
 
 Firmware für [Heltec CubeCell HTCC-AB01](https://heltec.org/project/htcc-ab01/) Boards zur LoRaWAN-Netzwerkvermessung im Rahmen eines Smart-City-Projektes mit der **Landeshauptstadt Potsdam**. Geschrieben von Frank Hübner und Michael Vesper.
 

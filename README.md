@@ -66,7 +66,7 @@ Anhand der empfangenen Pings und der am Gateway gemessenen Signalstärke (RSSI/S
 
 ### Bewegungsschwelle
 
-Um stationäre Dauerpings (z.B. beim Liegen auf einem Schreibtisch) zu vermeiden und Indoor-Messungen zu unterdrücken, wird ein Ping erst gesendet, wenn das Gerät sich seit dem letzten Ping **mindestens 9 Meter** fortbewegt hat. Die ersten 4 Pings nach dem Einschalten werden ohne Bewegungsprüfung gesendet, damit das Gerät nach dem Start korrekt initialisiert wird.
+Um stationäre Dauerpings (z.B. beim Liegen auf einem Schreibtisch) zu vermeiden und Indoor-Messungen zu unterdrücken, wird ein Ping erst gesendet, wenn das Gerät sich seit dem letzten Ping **mindestens 9 Meter** fortbewegt hat. Die ersten 4 Pings nach dem Einschalten werden ohne Bewegungsprüfung gesendet, damit das Gerät nach dem Start korrekt initialisiert wird und man dies auch ohne GPS-Daten im TTN / Chirpstack Dashboard einsehen kann.
 
 ### EEPROM-Pufferung für Funklöcher
 
@@ -127,7 +127,7 @@ Lege in **beiden** Netzwerken je ein neues ABP-Gerät an:
 - **The Things Network (TTN):** [console.cloud.thethings.network](https://console.cloud.thethings.network)
 - **ChirpStack:** Über die jeweilige Server-Instanz
 
-Stelle bei beiden Geräten sicher, dass ABP als Aktivierungstyp gewählt ist und der Rahmen-Counter (Frame Counter) auf 0 startet bzw. **Frame Counter Checks deaktiviert** sind.
+Stelle bei beiden Geräten sicher, dass ABP als Aktivierungstyp gewählt ist und der Rahmen-Counter (Frame Counter) auf 0 startet **und die Frame Counter Checks deaktiviert** sind.
 
 ### Schritt 2: Keys in die Firmware eintragen
 
@@ -144,9 +144,105 @@ uint8_t appSKey_CS[]  = { 0x00, ... };
 uint32_t devAddr_CS   = ( uint32_t )0x00000000;
 ```
 
-### Schritt 3: Board-ID setzen
+### Schritt 3: Payload-Formatter
+
+Der folgende JavaScript-Formatter muss in **beiden** Netzwerken (TTN und ChirpStack) als Uplink-Decoder hinterlegt werden, damit die Rohdaten korrekt dekodiert und als JSON weitergegeben werden.
+
+### Paketstruktur
+ 
+| Byte(s) | Inhalt | Hinweis |
+|---|---|---|
+| `0` | Board-ID | 1 Byte |
+| `1–90` | 9 × GPS-Ping (je 10 Bytes) | Aktueller Ping + 8 History-Einträge |
+| `91–92` | Akkuspannung in mV | Big Endian, `/ 1000` → Volt |
+ 
+**Aufbau eines einzelnen Pings (10 Bytes):**
+ 
+| Byte(s) | Inhalt | Hinweis |
+|---|---|---|
+| `+0–1` | Frame-Counter | Big Endian, 2 Bytes |
+| `+2–5` | Längengrad (longitude) | Little Endian, Signed 32-Bit, `/ 1000000` → Dezimalgrad |
+| `+6–9` | Breitengrad (latitude) | Little Endian, Signed 32-Bit, `/ 1000000` → Dezimalgrad |
+ 
+Einträge mit `lat == 0` und `lon == 0` werden als leer behandelt und nicht ins Array aufgenommen – mit Ausnahme des ersten Eintrags (Index 0), der immer enthalten ist.
+
+### Formatter-Code
+ 
+```javascript
+function decodeUplink(input) {
+  var bytes = input.bytes;
+  var data = {};
+ 
+  // 1. Board-ID (1 Byte)
+  data.boardID = bytes[0];
+ 
+  // Array für alle mitgesendeten Pings (Aktuell + 8 History)
+  data.pings = [];
+ 
+  // 9 Einträge à 10 Bytes
+  for (var i = 0; i < 9; i++) {
+    var base = 1 + (i * 10);
+ 
+    // Sicherheitscheck: Paket kürzer als erwartet
+    if (bytes.length < base + 10) break;
+ 
+    // Counter (2 Bytes, Big Endian)
+    var counter = (bytes[base] << 8) | bytes[base + 1];
+ 
+    // Längengrad (4 Bytes, Little Endian, Signed 32-Bit)
+    var lonRaw = (bytes[base + 5] << 24 | bytes[base + 4] << 16 | bytes[base + 3] << 8 | bytes[base + 2]) | 0;
+ 
+    // Breitengrad (4 Bytes, Little Endian, Signed 32-Bit)
+    var latRaw = (bytes[base + 9] << 24 | bytes[base + 8] << 16 | bytes[base + 7] << 8 | bytes[base + 6]) | 0;
+ 
+    // Leere History-Einträge (lat=0, lon=0) überspringen – außer beim ersten Ping
+    if (latRaw == 0 && lonRaw == 0) {
+      if (i == 0) {
+        data.pings.push({
+          counter: counter,
+          longitude: lonRaw / 1000000,
+          latitude: latRaw / 1000000
+        });
+      }
+    } else {
+      data.pings.push({
+        counter: counter,
+        longitude: lonRaw / 1000000,
+        latitude: latRaw / 1000000
+      });
+    }
+  }
+ 
+  // Akkuspannung (Bytes 91–92, Big Endian) → Volt
+  if (bytes.length >= 93) {
+    var voltRaw = (bytes[91] << 8) | bytes[92];
+    data.batteryVoltage = voltRaw / 1000;
+  }
+ 
+  return {
+    data: data
+  };
+}
+```
+ 
+### Beispiel-Output
+ 
+```json
+{
+  "boardID": 1,
+  "pings": [
+    { "counter": 42, "longitude": 13.064332, "latitude": 52.390557 },
+    { "counter": 41, "longitude": 13.063891, "latitude": 52.390201 }
+  ],
+  "batteryVoltage": 3.842
+}
+```
+
+### Schritt 4: Board-ID setzen
 
 Jedes Board sollte eine eindeutige ID erhalten, um die Messdaten später zuordnen zu können:
+- **TTN:** Konsole → Anwendung → Payload formatters → Uplink → JavaScript
+- **ChirpStack:** Device Profile → Codec → JavaScript functions → `Decode`-Funktion
 ```cpp
 int boardID = 1; // Eindeutige ID für dieses Board
 ```

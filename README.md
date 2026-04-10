@@ -167,7 +167,8 @@ Der folgende JavaScript-Formatter muss in **beiden** Netzwerken (TTN und ChirpSt
 Einträge mit `lat == 0` und `lon == 0` werden als leer behandelt und nicht ins Array aufgenommen – mit Ausnahme des ersten Eintrags (Index 0), der immer enthalten ist.
 
 ### Formatter-Code
- 
+- **TTN:** Konsole → Anwendung → Payload formatters → Uplink → JavaScript
+- **ChirpStack:** Device Profile → Codec → JavaScript functions → `Decode`-Funktion
 ```javascript
 function decodeUplink(input) {
   var bytes = input.bytes;
@@ -241,8 +242,6 @@ function decodeUplink(input) {
 ### Schritt 4: Board-ID setzen
 
 Jedes Board sollte eine eindeutige ID erhalten, um die Messdaten später zuordnen zu können:
-- **TTN:** Konsole → Anwendung → Payload formatters → Uplink → JavaScript
-- **ChirpStack:** Device Profile → Codec → JavaScript functions → `Decode`-Funktion
 ```cpp
 int boardID = 1; // Eindeutige ID für dieses Board
 ```

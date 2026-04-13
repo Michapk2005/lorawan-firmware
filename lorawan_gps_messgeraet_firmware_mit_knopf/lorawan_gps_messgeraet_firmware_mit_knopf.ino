@@ -571,7 +571,7 @@ void loop()
         mibReq.Param.AppSKey = appSKey_CS;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
-        // ANGEPASST: SF9 (DR_3) fest für TTN, ADR deaktiviert
+        // ANGEPASST: SF9 (DR_3) fest für CS, ADR deaktiviert
         // Begründung: Garantiert Einhaltung der Fair Use Policy unabhängig von Empfangssituation
         mibReq.Type = MIB_CHANNELS_DATARATE;
         mibReq.Param.ChannelsDatarate = DR_3; // DR_3 = SF9 in EU868 fest

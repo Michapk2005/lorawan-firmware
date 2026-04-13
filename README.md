@@ -116,9 +116,7 @@ Unter **Tools** folgende Einstellungen vornehmen:
 | LORAWAN_UPLINK_MODE | UNCONFIRMED |
 
 > **Hinweis:** ADR wird in der Firmware netzwerkspezifisch gesteuert:
-> TTN sendet immer mit SF7 (ADR deaktiviert), CS startet mit SF9 und 
-> passt sich per ADR dynamisch an die Empfangssituation an.
-> Die IDE-Einstellung wird durch den Code überschrieben.
+> TTN sendet immer mit SF7 ,CS immer mit SF9 (ADR deaktiviert)
 
 ---
 

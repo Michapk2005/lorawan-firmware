@@ -105,7 +105,7 @@ struct PingEntry {
 // ANGEPASST: TTN History auf 8 Einträge, CS History auf 11 Einträge
 // Begründung: Unterschiedliche Payload-Größen je nach Duty Cycle Budget pro Netzwerk
 // TTN SF7: max. 83 Bytes → 1 + (8×10) + 2 = 83 Bytes
-// CS  SF9: max. 113 Bytes → 1 + (11×10) + 2 = 113 Bytes (SF9 Limit: 115 Bytes)
+// CS  SF9 fest: 113 Bytes → 1 + (11×10) + 2 = 113 Bytes (SF9 Limit: 115 Bytes)
 PingEntry historyTTN[8]; 
 PingEntry historyCS[11];
 
@@ -517,17 +517,17 @@ void loop()
         mibReq.Param.AppSKey = appSKey_CS;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
-        // ANGEPASST: ADR aktiv für CS, aber SF9 (DR_3) als Startwert gesetzt
-        // Begründung: ADR darf für CS dynamisch anpassen, SF9 ist worst-case für Duty Cycle Berechnung
+        // ANGEPASST: SF9 (DR_3) fest für TTN, ADR deaktiviert
+        // Begründung: Garantiert Einhaltung der Fair Use Policy unabhängig von Empfangssituation
         mibReq.Type = MIB_CHANNELS_DATARATE;
-        mibReq.Param.ChannelsDatarate = DR_3; // DR_3 = SF9 in EU868 als Startwert
+        mibReq.Param.ChannelsDatarate = DR_3; // DR_3 = SF9 in EU868 fest
         LoRaMacMibSetRequestConfirm(&mibReq);
 
         mibReq.Type = MIB_ADR;
-        mibReq.Param.AdrEnable = true; // ADR an für CS - dynamische Anpassung erlaubt
+        mibReq.Param.AdrEnable = false; // ADR aus für CS - SF9 bleibt fest
         LoRaMacMibSetRequestConfirm(&mibReq);
 
-        Serial.println("\n>> MAPPING: ChirpStack (SF9 Start, ADR aktiv) <<");
+        Serial.println("\n>> MAPPING: ChirpStack (SF9 fest, kein ADR) <<");
 
         if (prepareTxFrame(appPort)) {
           LoRaWAN.send();

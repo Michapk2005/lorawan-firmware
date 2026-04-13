@@ -82,7 +82,7 @@ Die gespeicherten Pings können über den seriellen Monitor ausgelesen werden: I
 
 In der Arduino IDE unter **File → Preferences → Settings → Additional boards manager URLs** folgende URL eintragen:
 ```
-https://resource.heltec.cn/download/package_CubeCell_index.json
+https://github.com/HelTecAutomation/CubeCell-Arduino/releases/download/V1.5.0/package_CubeCell_index.json
 ```
 
 Anschließend im **Boards Manager** nach `CubeCell` suchen und das **CubeCell Development Framework** installieren.  

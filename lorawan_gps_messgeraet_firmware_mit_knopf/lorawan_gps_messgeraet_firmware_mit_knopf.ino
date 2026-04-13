@@ -105,12 +105,12 @@ struct PingEntry {
   long lat;
 };
 
-// ANGEPASST: TTN History auf 8 Einträge, CS History auf 15 Einträge
+// ANGEPASST: TTN History auf 8 Einträge, CS History auf 11 Einträge
 // Begründung: Unterschiedliche Payload-Größen je nach Duty Cycle Budget pro Netzwerk
 // TTN SF7: max. 83 Bytes → 1 + (8×10) + 2 = 83 Bytes
-// CS  SF9: max. ~153 Bytes → 1 + (15×10) + 2 = 153 Bytes
+// CS  SF9: max. 113 Bytes → 1 + (11×10) + 2 = 113 Bytes (SF9 Limit: 115 Bytes)
 PingEntry historyTTN[8]; 
-PingEntry historyCS[15];
+PingEntry historyCS[11];
 
 
 // The serial connection to the GPS device
@@ -264,7 +264,7 @@ static bool prepareTxFrame( uint8_t port )
       for (int i = 7; i > 0; i--) historyTTN[i] = historyTTN[i-1];
       historyTTN[0] = { (uint16_t)countTTN, laenge, breite };
     } else {
-      for (int i = 14; i > 0; i--) historyCS[i] = historyCS[i-1];
+      for (int i = 10; i > 0; i--) historyCS[i] = historyCS[i-1];
       historyCS[0] = { (uint16_t)countCS, laenge, breite };
     }
   } 
@@ -289,16 +289,16 @@ static bool prepareTxFrame( uint8_t port )
 
   // ANGEPASST: Unterschiedliche Payload-Größen je nach Netzwerk
   // TTN: 1 + (8 × 10) + 2 = 83 Bytes  → SF7 konform
-  // CS:  1 + (15 × 10) + 2 = 153 Bytes → SF9 worst-case konform
+  // CS:  1 + (11 × 10) + 2 = 113 Bytes → SF9 konform (SF9 Limit: 115 Bytes)
   if (sendToTTN) {
     appDataSize = 83;
   } else {
-    appDataSize = 153;
+    appDataSize = 113;
   }
 
   appData[0] = (uint8_t)(boardID & 0xFF);
 
-  // ANGEPASST: Loop-Länge je nach Netzwerk (8 für TTN, 15 für CS)
+  // ANGEPASST: Loop-Länge je nach Netzwerk (8 für TTN, 11 für CS)
   if (sendToTTN) {
     for (int i = 0; i < 8; i++) {
       int base = 1 + (i * 10);
@@ -316,7 +316,7 @@ static bool prepareTxFrame( uint8_t port )
     appData[81] = (uint8_t)(currentBattery >> 8);
     appData[82] = (uint8_t)(currentBattery & 0xFF);
   } else {
-    for (int i = 0; i < 15; i++) {
+    for (int i = 0; i < 11; i++) {
       int base = 1 + (i * 10);
       appData[base]     = historyCS[i].counter >> 8;
       appData[base + 1] = historyCS[i].counter & 0xFF;
@@ -329,8 +329,8 @@ static bool prepareTxFrame( uint8_t port )
       appData[base + 8] = (uint32_t)historyCS[i].lat >> 16;
       appData[base + 9] = (uint32_t)historyCS[i].lat >> 24;
     }
-    appData[151] = (uint8_t)(currentBattery >> 8);
-    appData[152] = (uint8_t)(currentBattery & 0xFF);
+    appData[111] = (uint8_t)(currentBattery >> 8);
+    appData[112] = (uint8_t)(currentBattery & 0xFF);
   }
   
   // Only save TTN Pings for upload

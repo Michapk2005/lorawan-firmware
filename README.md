@@ -158,8 +158,8 @@ Der folgende JavaScript-Formatter muss in **beiden** Netzwerken (TTN und ChirpSt
 | Byte(s) | Inhalt | Hinweis |
 |---|---|---|
 | `0` | Board-ID | 1 Byte |
-| `1–80` / `1–150` | 8 × bzw. 15 × GPS-Ping (je 10 Bytes) | TTN: 8 Pings, CS: 15 Pings |
-| `81–82` / `151–152` | Akkuspannung in mV | Big Endian, `/ 1000` → Volt |
+| `1–80` / `1–110` | 8 × bzw. 11 × GPS-Ping (je 10 Bytes) | TTN: 8 Pings, CS: 11 Pings |
+| `81–82` / `111–112` | Akkuspannung in mV | Big Endian, `/ 1000` → Volt |
  
 **Aufbau eines einzelnen Pings (10 Bytes):**
  
@@ -210,7 +210,7 @@ function decodeUplink(input) {
 }
 ```
 
-**ChirpStack (15 Pings, 153 Bytes):**
+**ChirpStack (11 Pings, 113 Bytes):**
 ```javascript
 function decodeUplink(input) {
   var bytes = input.bytes;
@@ -219,7 +219,7 @@ function decodeUplink(input) {
   data.boardID = bytes[0];
   data.pings = [];
 
-  for (var i = 0; i < 15; i++) {
+  for (var i = 0; i < 11; i++) {
     var base = 1 + (i * 10);
     if (bytes.length < base + 10) break;
 
@@ -236,8 +236,8 @@ function decodeUplink(input) {
     }
   }
 
-  if (bytes.length >= 153) {
-    var voltRaw = (bytes[151] << 8) | bytes[152];
+  if (bytes.length >= 113) {
+    var voltRaw = (bytes[111] << 8) | bytes[112];
     data.batteryVoltage = voltRaw / 1000;
   }
 

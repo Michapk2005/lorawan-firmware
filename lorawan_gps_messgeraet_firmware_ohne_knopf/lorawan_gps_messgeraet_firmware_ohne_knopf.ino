@@ -220,7 +220,7 @@ bool isTooClose(long newLon, long newLat) {
   return false;
 }
 
-// Gets new GPS-Coordinates and sends it via LoRaWAN, if the previous ping is more than 8m away.
+// Gets new GPS-Coordinates and sends it via LoRaWAN, if the previous ping is more than 9m away.
 static bool prepareTxFrame( uint8_t port ) 
 {
   // Get new coordinate
@@ -254,7 +254,7 @@ static bool prepareTxFrame( uint8_t port )
 
   // From this point on a ping will be sent via LoRaWAN:
 
-  // ANGEPASST: History-Arrays haben unterschiedliche Größen (TTN: 8, CS: 15)
+  // ANGEPASST: History-Arrays haben unterschiedliche Größen (TTN: 8, CS: 11)
   if (laenge != 0 && breite != 0){
     if (sendToTTN) {
       for (int i = 7; i > 0; i--) historyTTN[i] = historyTTN[i-1];
@@ -458,7 +458,6 @@ void loop()
 
       // ANGEPASST: TTN nur jeden 2. Zyklus senden (alle 90s statt 45s)
       // CS sendet jeden Zyklus (alle 45s)
-      // Begründung: TTN Fair Use Policy bei SF7, 83 Bytes, 9h Betrieb
       bool doSendTTN = (cycleCounter % 2 == 0);
 
       MibRequestConfirm_t mibReq;
@@ -482,20 +481,32 @@ void loop()
         mibReq.Param.AppSKey = appSKey_TTN;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
-        // ANGEPASST: SF7 (DR_5) fest für TTN, ADR deaktiviert
-        // Begründung: Garantiert Einhaltung der Fair Use Policy unabhängig von Empfangssituation
+        // SF7 (DR_5) fest für TTN, ADR deaktiviert
         mibReq.Type = MIB_CHANNELS_DATARATE;
-        mibReq.Param.ChannelsDatarate = DR_5; // DR_5 = SF7 in EU868
+        mibReq.Param.ChannelsDatarate = DR_5;
+        LoRaMacMibSetRequestConfirm(&mibReq);
+
+        mibReq.Type = MIB_CHANNELS_DEFAULT_DATARATE;
+        mibReq.Param.ChannelsDefaultDatarate = DR_5;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
         mibReq.Type = MIB_ADR;
-        mibReq.Param.AdrEnable = false; // ADR aus für TTN - SF7 bleibt fest
+        mibReq.Param.AdrEnable = false;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
         Serial.println("\n>> MAPPING: TTN (SF7 fest, kein ADR) <<");
 
         if (prepareTxFrame(appPort)) {
           LoRaWAN.send();
+          MibRequestConfirm_t mibCheck;
+          mibCheck.Type = MIB_CHANNELS_DATARATE;
+          LoRaMacMibGetRequestConfirm(&mibCheck);
+          int sf = 12 - mibCheck.Param.ChannelsDatarate;
+          Serial.print("Aktuelle Datarate: DR_");
+          Serial.print(mibCheck.Param.ChannelsDatarate);
+          Serial.print(" (SF");
+          Serial.print(sf);
+          Serial.println(")");
         }
 
       } else {
@@ -517,20 +528,32 @@ void loop()
         mibReq.Param.AppSKey = appSKey_CS;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
-        // ANGEPASST: SF9 (DR_3) fest für CS, ADR deaktiviert
-        // Begründung: Garantiert Einhaltung der Fair Use Policy unabhängig von Empfangssituation
+        // SF9 (DR_3) fest für CS, ADR deaktiviert
         mibReq.Type = MIB_CHANNELS_DATARATE;
-        mibReq.Param.ChannelsDatarate = DR_3; // DR_3 = SF9 in EU868 fest
+        mibReq.Param.ChannelsDatarate = DR_3;
+        LoRaMacMibSetRequestConfirm(&mibReq);
+
+        mibReq.Type = MIB_CHANNELS_DEFAULT_DATARATE;
+        mibReq.Param.ChannelsDefaultDatarate = DR_3;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
         mibReq.Type = MIB_ADR;
-        mibReq.Param.AdrEnable = false; // ADR aus für CS - SF9 bleibt fest
+        mibReq.Param.AdrEnable = false;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
         Serial.println("\n>> MAPPING: ChirpStack (SF9 fest, kein ADR) <<");
 
         if (prepareTxFrame(appPort)) {
-          LoRaWAN.send();
+          // Direkt über MCPS senden mit expliziter Datarate
+          McpsReq_t mcpsReq;
+          mcpsReq.Type = MCPS_UNCONFIRMED;
+          mcpsReq.Req.Unconfirmed.fPort = appPort;
+          mcpsReq.Req.Unconfirmed.fBuffer = appData;
+          mcpsReq.Req.Unconfirmed.fBufferSize = appDataSize;
+          mcpsReq.Req.Unconfirmed.Datarate = DR_3; // SF9 direkt
+          LoRaMacMcpsRequest(&mcpsReq);
+
+          Serial.println("unconfirmed uplink sending (SF9 direkt)...");
         }
       }
 

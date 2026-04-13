@@ -42,6 +42,8 @@ uint32_t devAddr;
 
 bool sendToTTN = false; // Toggle-Variable für den Netzwerkwechsel
 
+// NEU: Zähler damit TTN nur jedes 2. Mal gesendet wird (alle 90s statt 45s)
+int cycleCounter = 0;
 
 // Speichern von Pings für Funklöcher:
 int eepromAddr = 0; // Aktuelle Schreibadresse
@@ -58,8 +60,11 @@ LoRaMacRegion_t loraWanRegion = ACTIVE_REGION;
 /*LoraWan Class, Class A and Class C are supported*/
 DeviceClass_t  loraWanClass = LORAWAN_CLASS;
 
-/* 30.000ms (30s) Intervall, damit jedes Netz jede Minute einen Ping bekommt */
-uint32_t appTxDutyCycle = 30000;
+// ANGEPASST: 45s Intervall - CS sendet jeden Zyklus (alle 45s), TTN jeden 2. Zyklus (= alle 90s)
+// Begründung: Duty Cycle (EU 1%) und TTN Fair Use Policy (30s/Tag bei geschätzt 7h Betrieb)
+// Duty Cycle: CS 80×399ms + TTN 40×84ms = 31.920ms + 3.360ms = 35.280ms/h (98% von 36.000ms) ✅
+// TTN Fair Use: 280 Pakete/Tag × 84ms = 23.520ms (78,4% von 30.000ms) ✅
+uint32_t appTxDutyCycle = 45000;
 
 /*OTAA or ABP*/
 bool overTheAirActivation = false; // Fix auf ABP gesetzt
@@ -67,11 +72,13 @@ bool overTheAirActivation = false; // Fix auf ABP gesetzt
 /*ADR enable*/
 bool loraWanAdr = LORAWAN_ADR;
 
-/* ANGEPASST: MUSS false sein! Da wir den MAC-State alle 30s neu initiieren, würde true den Flash zerstören. */
+/* ANGEPASST: MUSS false sein! Da wir den MAC-State alle 45s neu initiieren, würde true den Flash zerstören. */
 bool keepNet = false; 
 
-/* Indicates if the node is sending confirmed or unconfirmed messages */
-bool isTxConfirmed = LORAWAN_UPLINKMODE;
+// ANGEPASST: Unconfirmed Mode - kein Retry, kein ACK-Downlink
+// Begründung: Retries würden Duty Cycle und Fair Use Budget sprengen.
+// Für ein Coverage-Mapping-Projekt ist Unconfirmed korrekt - ein verlorenes Paket ist die gesuchte Information.
+bool isTxConfirmed = false;
 
 /* Application port */
 uint8_t appPort = 2;
@@ -98,9 +105,12 @@ struct PingEntry {
   long lat;
 };
 
-// Historie für beide Netze (Index 0 ist immer der neueste)
-PingEntry historyTTN[9]; 
-PingEntry historyCS[9];
+// ANGEPASST: TTN History auf 8 Einträge, CS History auf 15 Einträge
+// Begründung: Unterschiedliche Payload-Größen je nach Duty Cycle Budget pro Netzwerk
+// TTN SF7: max. 83 Bytes → 1 + (8×10) + 2 = 83 Bytes
+// CS  SF9: max. ~153 Bytes → 1 + (15×10) + 2 = 153 Bytes
+PingEntry historyTTN[8]; 
+PingEntry historyCS[15];
 
 
 // The serial connection to the GPS device
@@ -248,13 +258,13 @@ static bool prepareTxFrame( uint8_t port )
   
   //From this point on a ping will be send via LoRaWAN:
 
-  //Update the history-array
+  // ANGEPASST: History-Arrays haben unterschiedliche Größen (TTN: 8, CS: 15)
   if (laenge != 0 && breite != 0){
     if (sendToTTN) {
-      for (int i = 8; i > 0; i--) historyTTN[i] = historyTTN[i-1];
+      for (int i = 7; i > 0; i--) historyTTN[i] = historyTTN[i-1];
       historyTTN[0] = { (uint16_t)countTTN, laenge, breite };
     } else {
-      for (int i = 8; i > 0; i--) historyCS[i] = historyCS[i-1];
+      for (int i = 14; i > 0; i--) historyCS[i] = historyCS[i-1];
       historyCS[0] = { (uint16_t)countCS, laenge, breite };
     }
   } 
@@ -277,31 +287,51 @@ static bool prepareTxFrame( uint8_t port )
   deviceStatusBatteryLevel = map(getBatteryVoltage(), 3300, 4200, 1, 254); //Für TTN und Chirpstack Batteriewert 1-254
   uint16_t currentBattery = getBatteryVoltage(); // Batteriewert für Payload
 
-  //Preparing Data for ping - 91 Bytes for Pings + 2 Bytes for Battery
-  appDataSize = 93;
+  // ANGEPASST: Unterschiedliche Payload-Größen je nach Netzwerk
+  // TTN: 1 + (8 × 10) + 2 = 83 Bytes  → SF7 konform
+  // CS:  1 + (15 × 10) + 2 = 153 Bytes → SF9 worst-case konform
+  if (sendToTTN) {
+    appDataSize = 83;
+  } else {
+    appDataSize = 153;
+  }
 
   appData[0] = (uint8_t)(boardID & 0xFF);
 
-  PingEntry* currentHistory = sendToTTN ? historyTTN : historyCS;
-  for (int i = 0; i < 9; i++) {
-    int base = 1 + (i * 10);
-    // Counter (Big Endian)
-    appData[base]     = currentHistory[i].counter >> 8;
-    appData[base + 1] = currentHistory[i].counter & 0xFF;
-    // Longitude (Little Endian)
-    appData[base + 2] = (uint32_t)currentHistory[i].lon;
-    appData[base + 3] = (uint32_t)currentHistory[i].lon >> 8;
-    appData[base + 4] = (uint32_t)currentHistory[i].lon >> 16;
-    appData[base + 5] = (uint32_t)currentHistory[i].lon >> 24;
-    // Latitude (Little Endian)
-    appData[base + 6] = (uint32_t)currentHistory[i].lat;
-    appData[base + 7] = (uint32_t)currentHistory[i].lat >> 8;
-    appData[base + 8] = (uint32_t)currentHistory[i].lat >> 16;
-    appData[base + 9] = (uint32_t)currentHistory[i].lat >> 24;
+  // ANGEPASST: Loop-Länge je nach Netzwerk (8 für TTN, 15 für CS)
+  if (sendToTTN) {
+    for (int i = 0; i < 8; i++) {
+      int base = 1 + (i * 10);
+      appData[base]     = historyTTN[i].counter >> 8;
+      appData[base + 1] = historyTTN[i].counter & 0xFF;
+      appData[base + 2] = (uint32_t)historyTTN[i].lon;
+      appData[base + 3] = (uint32_t)historyTTN[i].lon >> 8;
+      appData[base + 4] = (uint32_t)historyTTN[i].lon >> 16;
+      appData[base + 5] = (uint32_t)historyTTN[i].lon >> 24;
+      appData[base + 6] = (uint32_t)historyTTN[i].lat;
+      appData[base + 7] = (uint32_t)historyTTN[i].lat >> 8;
+      appData[base + 8] = (uint32_t)historyTTN[i].lat >> 16;
+      appData[base + 9] = (uint32_t)historyTTN[i].lat >> 24;
+    }
+    appData[81] = (uint8_t)(currentBattery >> 8);
+    appData[82] = (uint8_t)(currentBattery & 0xFF);
+  } else {
+    for (int i = 0; i < 15; i++) {
+      int base = 1 + (i * 10);
+      appData[base]     = historyCS[i].counter >> 8;
+      appData[base + 1] = historyCS[i].counter & 0xFF;
+      appData[base + 2] = (uint32_t)historyCS[i].lon;
+      appData[base + 3] = (uint32_t)historyCS[i].lon >> 8;
+      appData[base + 4] = (uint32_t)historyCS[i].lon >> 16;
+      appData[base + 5] = (uint32_t)historyCS[i].lon >> 24;
+      appData[base + 6] = (uint32_t)historyCS[i].lat;
+      appData[base + 7] = (uint32_t)historyCS[i].lat >> 8;
+      appData[base + 8] = (uint32_t)historyCS[i].lat >> 16;
+      appData[base + 9] = (uint32_t)historyCS[i].lat >> 24;
+    }
+    appData[151] = (uint8_t)(currentBattery >> 8);
+    appData[152] = (uint8_t)(currentBattery & 0xFF);
   }
-
-  appData[91] = (uint8_t)(currentBattery >> 8);
-  appData[92] = (uint8_t)(currentBattery & 0xFF);
   
   // Only save TTN Pings for upload
   if (laenge != 0 && breite != 0 && sendToTTN) {      
@@ -419,11 +449,6 @@ void loop()
   bool schalterGedrueckt = (digitalRead(SLEEP_SWITCH_PIN) == LOW);
  
   // --- SCHLAF-MODUS (Schalter offen / Pin HIGH) ---
-  // =========================================================================
-  // FIX 2: Kein while-Loop mehr! Stattdessen: einmal prüfen, Timer setzen,
-  //         schlafen, und per return loop() neu starten.
-  //         So blockiert die Schlaf-Logik nicht die LoRaWAN-State-Machine.
-  // =========================================================================
   if (!schalterGedrueckt) {
     digitalWrite(Vext, HIGH);
     if (isAwake) {
@@ -435,11 +460,9 @@ void loop()
     }
 
     if (deviceState == DEVICE_STATE_SLEEP) {
-      // Stack ist initialisiert → normaler LoRaWAN-Sleep
       LoRaWAN.cycle(appTxDutyCycle);
       LoRaWAN.sleep();
     } else {
-      // Stack NICHT initialisiert (z.B. Boot mit offenem Schalter)
       delay(appTxDutyCycle);
     }
     return;
@@ -447,20 +470,21 @@ void loop()
  
   // --- AUFWACH-PHASE (Schalter gedrückt / Pin LOW) ---
   digitalWrite(Vext, LOW);
-  ss.begin(GPSBaud);
 
+  // ANGEPASST: ss.begin() nur beim echten Aufwachen aufrufen, nicht bei jedem Loop-Durchlauf.
+  // Verhindert unnötigen UART-Reset und Buffer-Verlust bei laufendem GPS.
   if (!isAwake) {
+    ss.begin(GPSBaud);
     Serial.println("Schalter AN: Initialisiere System einmalig...");
     delay(2000);                // GPS-Modul braucht Anlaufzeit beim Kaltstart
     isAwake = true;
     deviceState = DEVICE_STATE_INIT;
+    cycleCounter = 0;           // Zähler beim Aufwachen zurücksetzen
   }
  
   // --- NORMALER BETRIEB ---
   delay(400);
   smartDelay(750);
- 
-  
  
   switch( deviceState )
   {
@@ -484,32 +508,88 @@ void loop()
     }
     case DEVICE_STATE_SEND:
     {
-        sendToTTN = !sendToTTN; // Netzwerk-Toggle
- 
-        MibRequestConfirm_t mibReq;
- 
-        // 1. Device Address setzen
+      cycleCounter++;
+
+      // ANGEPASST: TTN nur jeden 2. Zyklus senden (alle 90s statt 45s)
+      // CS sendet jeden Zyklus (alle 45s)
+      // Begründung: TTN Fair Use Policy bei SF7, 83 Bytes, und bei 7h Betrieb
+      bool doSendTTN = (cycleCounter % 2 == 0);
+
+      MibRequestConfirm_t mibReq;
+
+      if (doSendTTN) {
+        // --- TTN Paket ---
+        sendToTTN = true;
+
+        // Device Address
         mibReq.Type = MIB_DEV_ADDR;
-        mibReq.Param.DevAddr = sendToTTN ? devAddr_TTN : devAddr_CS;
+        mibReq.Param.DevAddr = devAddr_TTN;
         LoRaMacMibSetRequestConfirm(&mibReq);
- 
-        // 2. Network Session Key setzen
+
+        // Network Session Key
         mibReq.Type = MIB_NWK_SKEY;
-        mibReq.Param.NwkSKey = sendToTTN ? nwkSKey_TTN : nwkSKey_CS;
+        mibReq.Param.NwkSKey = nwkSKey_TTN;
         LoRaMacMibSetRequestConfirm(&mibReq);
- 
-        // 3. Application Session Key setzen
+
+        // Application Session Key
         mibReq.Type = MIB_APP_SKEY;
-        mibReq.Param.AppSKey = sendToTTN ? appSKey_TTN : appSKey_CS;
+        mibReq.Param.AppSKey = appSKey_TTN;
         LoRaMacMibSetRequestConfirm(&mibReq);
- 
-        Serial.println(sendToTTN ? "\n>> MAPPING: TTN (Direct MIB) <<" : "\n>> MAPPING: ChirpStack (Direct MIB) <<");
- 
+
+        // ANGEPASST: SF7 (DR_5) fest für TTN, ADR deaktiviert
+        // Begründung: Garantiert Einhaltung der Fair Use Policy unabhängig von Empfangssituation
+        mibReq.Type = MIB_CHANNELS_DATARATE;
+        mibReq.Param.ChannelsDatarate = DR_5; // DR_5 = SF7 in EU868
+        LoRaMacMibSetRequestConfirm(&mibReq);
+
+        mibReq.Type = MIB_ADR;
+        mibReq.Param.AdrEnable = false; // ADR aus für TTN - SF7 bleibt fest
+        LoRaMacMibSetRequestConfirm(&mibReq);
+
+        Serial.println("\n>> MAPPING: TTN (SF7 fest, kein ADR) <<");
+
         if (prepareTxFrame(appPort)) {
-            LoRaWAN.send();
+          LoRaWAN.send();
         }
-        deviceState = DEVICE_STATE_CYCLE;
-        break;
+
+      } else {
+        // --- CS Paket ---
+        sendToTTN = false;
+
+        // Device Address
+        mibReq.Type = MIB_DEV_ADDR;
+        mibReq.Param.DevAddr = devAddr_CS;
+        LoRaMacMibSetRequestConfirm(&mibReq);
+
+        // Network Session Key
+        mibReq.Type = MIB_NWK_SKEY;
+        mibReq.Param.NwkSKey = nwkSKey_CS;
+        LoRaMacMibSetRequestConfirm(&mibReq);
+
+        // Application Session Key
+        mibReq.Type = MIB_APP_SKEY;
+        mibReq.Param.AppSKey = appSKey_CS;
+        LoRaMacMibSetRequestConfirm(&mibReq);
+
+        // ANGEPASST: ADR aktiv für CS, aber SF9 (DR_3) als Startwert gesetzt
+        // Begründung: ADR darf für CS dynamisch anpassen, SF9 ist worst-case für Duty Cycle Berechnung
+        mibReq.Type = MIB_CHANNELS_DATARATE;
+        mibReq.Param.ChannelsDatarate = DR_3; // DR_3 = SF9 in EU868 als Startwert
+        LoRaMacMibSetRequestConfirm(&mibReq);
+
+        mibReq.Type = MIB_ADR;
+        mibReq.Param.AdrEnable = true; // ADR an für CS - dynamische Anpassung erlaubt
+        LoRaMacMibSetRequestConfirm(&mibReq);
+
+        Serial.println("\n>> MAPPING: ChirpStack (SF9 Start, ADR aktiv) <<");
+
+        if (prepareTxFrame(appPort)) {
+          LoRaWAN.send();
+        }
+      }
+
+      deviceState = DEVICE_STATE_CYCLE;
+      break;
     }
     case DEVICE_STATE_CYCLE:
     {

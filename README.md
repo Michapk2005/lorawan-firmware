@@ -66,7 +66,7 @@ Anhand der empfangenen Pings und der am Gateway gemessenen Signalstärke (RSSI/S
 
 ### Bewegungsschwelle
 
-Um stationäre Dauerpings (z.B. beim Liegen auf einem Schreibtisch) zu vermeiden und Indoor-Messungen zu unterdrücken, wird ein Ping erst gesendet, wenn das Gerät sich seit dem letzten Ping **mindestens 10 Meter** fortbewegt hat. Die ersten 4 Pings nach dem Einschalten werden ohne Bewegungsprüfung gesendet, damit das Gerät nach dem Start korrekt initialisiert wird und man dies auch ohne GPS-Daten im TTN / Chirpstack Dashboard einsehen kann.
+Um stationäre Dauerpings (z.B. beim Liegen auf einem Schreibtisch) zu vermeiden und Indoor-Messungen zu unterdrücken, wird ein Ping erst gesendet, wenn das Gerät sich seit dem letzten Ping **mindestens 10 Meter** fortbewegt hat. Die ersten 5 Pings nach dem Einschalten werden ohne Bewegungsprüfung gesendet, damit das Gerät nach dem Start korrekt initialisiert wird und man dies auch ohne GPS-Daten im TTN / Chirpstack Dashboard einsehen kann.
 
 ### EEPROM-Pufferung für Funklöcher
 
@@ -217,7 +217,17 @@ function decodeUplink(input) {
   data.boardID = bytes[0];
   data.pings = [];
 
-  for (var i = 0; i < 11; i++) {
+  // Anzahl Pings anhand der Paketlänge bestimmen:
+  // Alte Firmware: 93 Bytes → 9 Pings
+  // Neue Firmware: 113 Bytes → 11 Pings
+  var numPings;
+  if (bytes.length >= 113) {
+    numPings = 11;
+  } else {
+    numPings = 9;
+  }
+
+  for (var i = 0; i < numPings; i++) {
     var base = 1 + (i * 10);
     if (bytes.length < base + 10) break;
 
@@ -234,8 +244,12 @@ function decodeUplink(input) {
     }
   }
 
+  // Batterie-Bytes je nach Paketlänge
   if (bytes.length >= 113) {
     var voltRaw = (bytes[111] << 8) | bytes[112];
+    data.batteryVoltage = voltRaw / 1000;
+  } else if (bytes.length >= 93) {
+    var voltRaw = (bytes[91] << 8) | bytes[92];
     data.batteryVoltage = voltRaw / 1000;
   }
 

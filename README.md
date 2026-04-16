@@ -55,7 +55,7 @@ Board GPIO1 ──── Schalter ──── GND
 
 ## Funktionsweise
 
-Jedes Messgerät sendet abwechselnd Pings an zwei LoRaWAN-Netzwerke: **The Things Network (TTN)** und einen **ChirpStack**-Server. Dabei wird alle 45 Sekunden an den Chirpstack-Server gesendet und alle 90 Sekunden an TTN. Dies hängt mit dem europäischen Duty Cycle und der TTN [Fair Use Policy](https://www.thethingsnetwork.org/forum/t/fair-use-policy-explained/1300) zusammen.
+Jedes Messgerät sendet abwechselnd Pings an zwei LoRaWAN-Netzwerke: **The Things Network (TTN)** und einen **ChirpStack**-Server. Dabei wird alle 45 Sekunden an den Chirpstack-Server gesendet und alle 90 Sekunden an TTN. Dies hängt mit dem europäischen Duty Cycle und der TTN [Fair Use Policy](https://www.thethingsnetwork.org/forum/t/fair-use-policy-explained/1300) zusammen. An TTN wird mit SF7 (DR5) und an ChirpStack mit SF9 (DR3) gesendet.
 
 Jeder Ping enthält:
 - **Board-ID** zur Identifikation des Geräts

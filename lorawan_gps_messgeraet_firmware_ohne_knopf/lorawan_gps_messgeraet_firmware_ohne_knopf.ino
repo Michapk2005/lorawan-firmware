@@ -59,7 +59,7 @@ LoRaMacRegion_t loraWanRegion = ACTIVE_REGION;
 /*LoraWan Class, Class A and Class C are supported*/
 DeviceClass_t  loraWanClass = LORAWAN_CLASS;
 
-// ANGEPASST: 45s Intervall - CS sendet jeden Zyklus, TTN jeden 2. Zyklus (= alle 90s)
+// ANGEPASST: 45s Intervall - CS sendet jeden Zyklus (alle 45s), TTN jeden 2. Zyklus (= alle 90s)
 // Begründung: Duty Cycle (EU 1%) und TTN Fair Use Policy (30s/Tag bei geschätzt 7h Betrieb)
 uint32_t appTxDutyCycle = 45000;
 
@@ -380,6 +380,33 @@ void dumpEEPROM() {
 }
 
 
+// Helper: Loggt den MCPS-Status im Klartext
+void logMcpsStatus(const char* netzwerk, LoRaMacStatus_t status) {
+  Serial.print("MCPS Status ");
+  Serial.print(netzwerk);
+  Serial.print(": ");
+  Serial.print(status);
+  Serial.print(" -> ");
+  switch (status) {
+    case LORAMAC_STATUS_OK:
+      Serial.println("OK, Paket in Sende-Queue.");
+      break;
+    case LORAMAC_STATUS_BUSY:
+      Serial.println("FEHLER: MAC-Stack noch busy.");
+      break;
+    case LORAMAC_STATUS_DUTYCYCLE_RESTRICTED:
+      Serial.println("FEHLER: Duty-Cycle blockiert.");
+      break;
+    case LORAMAC_STATUS_LENGTH_ERROR:
+      Serial.println("FEHLER: Payload zu gross.");
+      break;
+    default:
+      Serial.println("FEHLER: Unbekannter Code.");
+      break;
+  }
+}
+
+
 // Setup function which is called when the Heltec-Board boots up
 void setup() {
   Serial.begin(115200);
@@ -415,10 +442,10 @@ void setup() {
   enableAt();
 #endif
 
-  // Initialisiere mit TTN Keys für den ersten Durchlauf
-  memcpy(nwkSKey, nwkSKey_TTN, 16);
-  memcpy(appSKey, appSKey_TTN, 16);
-  devAddr = devAddr_TTN;
+  // Initialisiere mit CS Keys für den ersten Durchlauf (CS sendet zuerst)
+  memcpy(nwkSKey, nwkSKey_CS, 16);
+  memcpy(appSKey, appSKey_CS, 16);
+  devAddr = devAddr_CS;
 
   deviceState = DEVICE_STATE_INIT;
   LoRaWAN.ifskipjoin();
@@ -455,28 +482,78 @@ void loop()
     case DEVICE_STATE_SEND:
     {
       cycleCounter++;
-
-      // ANGEPASST: TTN nur jeden 2. Zyklus senden (alle 90s statt 45s)
-      // CS sendet jeden Zyklus (alle 45s)
       bool doSendTTN = (cycleCounter % 2 == 0);
 
       MibRequestConfirm_t mibReq;
 
+      // =============================================================
+      // SCHRITT 1: CS sendet IMMER (jeden Zyklus = alle 45s)
+      // =============================================================
+      sendToTTN = false;
+
+      // Device Address -> CS
+      mibReq.Type = MIB_DEV_ADDR;
+      mibReq.Param.DevAddr = devAddr_CS;
+      LoRaMacMibSetRequestConfirm(&mibReq);
+
+      // Network Session Key -> CS
+      mibReq.Type = MIB_NWK_SKEY;
+      mibReq.Param.NwkSKey = nwkSKey_CS;
+      LoRaMacMibSetRequestConfirm(&mibReq);
+
+      // Application Session Key -> CS
+      mibReq.Type = MIB_APP_SKEY;
+      mibReq.Param.AppSKey = appSKey_CS;
+      LoRaMacMibSetRequestConfirm(&mibReq);
+
+      // SF9 (DR_3) fest für CS, ADR deaktiviert
+      mibReq.Type = MIB_CHANNELS_DATARATE;
+      mibReq.Param.ChannelsDatarate = DR_3;
+      LoRaMacMibSetRequestConfirm(&mibReq);
+
+      mibReq.Type = MIB_CHANNELS_DEFAULT_DATARATE;
+      mibReq.Param.ChannelsDefaultDatarate = DR_3;
+      LoRaMacMibSetRequestConfirm(&mibReq);
+
+      mibReq.Type = MIB_ADR;
+      mibReq.Param.AdrEnable = false;
+      LoRaMacMibSetRequestConfirm(&mibReq);
+
+      Serial.println("\n>> MAPPING: ChirpStack (SF9 fest, kein ADR) <<");
+
+      if (prepareTxFrame(appPort)) {
+        McpsReq_t mcpsReq;
+        mcpsReq.Type = MCPS_UNCONFIRMED;
+        mcpsReq.Req.Unconfirmed.fPort = appPort;
+        mcpsReq.Req.Unconfirmed.fBuffer = appData;
+        mcpsReq.Req.Unconfirmed.fBufferSize = appDataSize;
+        mcpsReq.Req.Unconfirmed.Datarate = DR_3; // SF9 direkt
+        LoRaMacStatus_t statusCS = LoRaMacMcpsRequest(&mcpsReq);
+        logMcpsStatus("CS", statusCS);
+      }
+
+      // =============================================================
+      // SCHRITT 2: TTN sendet nur jeden 2. Zyklus (alle 90s)
+      // Pause dazwischen, damit RX-Windows vom CS-Paket abgeschlossen sind
+      // =============================================================
       if (doSendTTN) {
-        // --- TTN Paket ---
+        // Warte damit der MAC-Stack das CS-Paket abschließen kann
+        // (TX + RX1 + RX2 dauert ca. 2-3s bei SF9)
+        delay(3000);
+
         sendToTTN = true;
 
-        // Device Address
+        // Device Address -> TTN
         mibReq.Type = MIB_DEV_ADDR;
         mibReq.Param.DevAddr = devAddr_TTN;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
-        // Network Session Key
+        // Network Session Key -> TTN
         mibReq.Type = MIB_NWK_SKEY;
         mibReq.Param.NwkSKey = nwkSKey_TTN;
         LoRaMacMibSetRequestConfirm(&mibReq);
 
-        // Application Session Key
+        // Application Session Key -> TTN
         mibReq.Type = MIB_APP_SKEY;
         mibReq.Param.AppSKey = appSKey_TTN;
         LoRaMacMibSetRequestConfirm(&mibReq);
@@ -497,63 +574,14 @@ void loop()
         Serial.println("\n>> MAPPING: TTN (SF7 fest, kein ADR) <<");
 
         if (prepareTxFrame(appPort)) {
-          LoRaWAN.send();
-          MibRequestConfirm_t mibCheck;
-          mibCheck.Type = MIB_CHANNELS_DATARATE;
-          LoRaMacMibGetRequestConfirm(&mibCheck);
-          int sf = 12 - mibCheck.Param.ChannelsDatarate;
-          Serial.print("Aktuelle Datarate: DR_");
-          Serial.print(mibCheck.Param.ChannelsDatarate);
-          Serial.print(" (SF");
-          Serial.print(sf);
-          Serial.println(")");
-        }
-
-      } else {
-        // --- CS Paket ---
-        sendToTTN = false;
-
-        // Device Address
-        mibReq.Type = MIB_DEV_ADDR;
-        mibReq.Param.DevAddr = devAddr_CS;
-        LoRaMacMibSetRequestConfirm(&mibReq);
-
-        // Network Session Key
-        mibReq.Type = MIB_NWK_SKEY;
-        mibReq.Param.NwkSKey = nwkSKey_CS;
-        LoRaMacMibSetRequestConfirm(&mibReq);
-
-        // Application Session Key
-        mibReq.Type = MIB_APP_SKEY;
-        mibReq.Param.AppSKey = appSKey_CS;
-        LoRaMacMibSetRequestConfirm(&mibReq);
-
-        // SF9 (DR_3) fest für CS, ADR deaktiviert
-        mibReq.Type = MIB_CHANNELS_DATARATE;
-        mibReq.Param.ChannelsDatarate = DR_3;
-        LoRaMacMibSetRequestConfirm(&mibReq);
-
-        mibReq.Type = MIB_CHANNELS_DEFAULT_DATARATE;
-        mibReq.Param.ChannelsDefaultDatarate = DR_3;
-        LoRaMacMibSetRequestConfirm(&mibReq);
-
-        mibReq.Type = MIB_ADR;
-        mibReq.Param.AdrEnable = false;
-        LoRaMacMibSetRequestConfirm(&mibReq);
-
-        Serial.println("\n>> MAPPING: ChirpStack (SF9 fest, kein ADR) <<");
-
-        if (prepareTxFrame(appPort)) {
-          // Direkt über MCPS senden mit expliziter Datarate
           McpsReq_t mcpsReq;
           mcpsReq.Type = MCPS_UNCONFIRMED;
           mcpsReq.Req.Unconfirmed.fPort = appPort;
           mcpsReq.Req.Unconfirmed.fBuffer = appData;
           mcpsReq.Req.Unconfirmed.fBufferSize = appDataSize;
-          mcpsReq.Req.Unconfirmed.Datarate = DR_3; // SF9 direkt
-          LoRaMacMcpsRequest(&mcpsReq);
-
-          Serial.println("unconfirmed uplink sending (SF9 direkt)...");
+          mcpsReq.Req.Unconfirmed.Datarate = DR_5; // SF7 direkt
+          LoRaMacStatus_t statusTTN = LoRaMacMcpsRequest(&mcpsReq);
+          logMcpsStatus("TTN", statusTTN);
         }
       }
 

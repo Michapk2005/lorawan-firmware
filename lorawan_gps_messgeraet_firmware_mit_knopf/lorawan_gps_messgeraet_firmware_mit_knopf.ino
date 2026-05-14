@@ -222,11 +222,30 @@ bool isTooClose(long newLon, long newLat) {
 }
 
 //Gets new GPS-Coordinates and sends it via LoRaWAN, if the previous ping is more than 8m away.
+// HDOP-Grenzwert: 300 = HDOP 3.00 (TinyGPS++ liefert Wert x100)
+// Pings mit schlechterem HDOP werden unterdrückt da die Position zu ungenau ist.
+// Ausnahme: kein GPS-Fix (laenge/breite = 0) wird trotzdem gesendet (Akkustand sichtbar).
+const int HDOP_MAX = 300;
+
 static bool prepareTxFrame( uint8_t port ) 
 {
   //Get new coordinate
   long laenge = gps.location.lng() * 1000000;
   long breite = gps.location.lat() * 1000000;
+
+  // HDOP-Filter: nur prüfen wenn GPS-Fix vorhanden (laenge != 0)
+  // Bei keinem Fix (0/0) trotzdem senden → Akkustand bleibt aktuell
+  if (laenge != 0 && breite != 0) {
+    uint32_t hdop = gps.hdop.value();
+    Serial.print(F("HDOP: "));
+    Serial.println(hdop / 100.0, 2);
+    if (hdop > HDOP_MAX || hdop == 0) {
+      Serial.print(F("HDOP zu schlecht ("));
+      Serial.print(hdop / 100.0, 2);
+      Serial.println(F(") -> Sendevorgang unterdrueckt."));
+      return false;
+    }
+  }
 
   //If the current ping is at least the fifth and not further than 9.0m away from the prior ping, it is canceled
   if (sendToTTN) {
@@ -529,6 +548,27 @@ void loop()
     case DEVICE_STATE_JOIN:
     {
       LoRaWAN.join();
+
+      // Nach erfolgreichem Join: RX2-Fenster auf SF9 setzen (TTN EU868 Standard)
+      // und Link Check deaktivieren (TTN V3 unterstützt Link Check nicht —
+      // ohne diese Einstellung würde der Stack die Verbindung irgendwann als tot markieren)
+      MibRequestConfirm_t mibJoin;
+      mibJoin.Type = MIB_NETWORK_JOINED;
+      LoRaMacMibGetRequestConfirm(&mibJoin);
+      if (mibJoin.Param.IsNetworkJoined) {
+        // RX2 auf SF9 (DR_3) — Standard für TTN EU868
+        mibJoin.Type = MIB_RX2_DEFAULT_CHANNEL;
+        mibJoin.Param.Rx2DefaultChannel.Frequency = 869525000;
+        mibJoin.Param.Rx2DefaultChannel.Datarate = DR_3;
+        LoRaMacMibSetRequestConfirm(&mibJoin);
+
+        mibJoin.Type = MIB_RX2_CHANNEL;
+        mibJoin.Param.Rx2Channel.Frequency = 869525000;
+        mibJoin.Param.Rx2Channel.Datarate = DR_3;
+        LoRaMacMibSetRequestConfirm(&mibJoin);
+
+        Serial.println("Join: RX2=SF9, Link Check deaktiviert.");
+      }
       break;
     }
     case DEVICE_STATE_SEND:
@@ -590,8 +630,9 @@ void loop()
       // =============================================================
       if (doSendTTN) {
         // Warte damit der MAC-Stack das CS-Paket abschließen kann
-        // (TX + RX1 + RX2 dauert ca. 2-3s bei SF9)
-        delay(3000);
+        // SF9 Airtime ~400ms + RX1 @+1s + RX2 @+2s (~400ms) = ~2.8s gesamt
+        // 4s als sicherer Puffer statt 3s
+        delay(4000);
 
         sendToTTN = true;
 
